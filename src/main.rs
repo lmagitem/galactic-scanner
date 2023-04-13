@@ -1,6 +1,14 @@
 use actix_cors::Cors;
-use actix_web::{get, post, web::Json, App, HttpServer};
+use actix_files::{Files, NamedFile};
+use actix_service::Service;
+use actix_web::{get, post, web::Json, web, App, HttpRequest, HttpServer, Result};
+use actix_web::http::header::HeaderValue;
+use actix_web::middleware::Logger;
+use chrono::Local;
+use fern::{Dispatch, log_file};
+use log::LevelFilter;
 use planet_generator::prelude::*;
+use std::path::PathBuf;
 
 #[post("/universe")]
 async fn universe_api(settings: Json<GenerationSettings>) -> Json<Universe> {
@@ -258,21 +266,57 @@ async fn test_system() -> Json<StarSystem> {
     })
 }
 
+async fn index() -> Result<NamedFile> {
+    let path: PathBuf = "./static/index.html".into();
+    Ok(NamedFile::open(path)?)
+}
+
+async fn serve_static(req: HttpRequest) -> Result<NamedFile> {
+    let path: PathBuf = req.match_info().query("tail").parse().unwrap();
+    let mime = mime_guess::from_path(&path).first_or_octet_stream();
+    Ok(NamedFile::open(path)?.set_content_type(mime))
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    std::env::set_var("RUST_LOG", "debug");
-    env_logger::init();
+    let base_config = Dispatch::new()
+        .level(LevelFilter::Warn)
+        .chain(std::io::stdout())
+        .chain(
+            log_file("actix-web.log").expect("Failed to create log file"),
+        );
+
+    let config = Dispatch::new()
+        .format(move |out, message, record| {
+            out.finish(format_args!(
+                "{} [{}] {}",
+                Local::now().format("[%Y-%m-%d %H:%M:%S]"),
+                record.level(),
+                message
+            ))
+        })
+        .chain(base_config);
+
+    config.apply().expect("Failed to set up logging");
+
     HttpServer::new(|| {
         let cors = Cors::permissive();
         App::new()
+            .wrap(Logger::default())
             .wrap(cors)
             .service(universe_api)
             .service(galaxy_api)
             .service(system_api)
             .service(test_settings)
             .service(test_system)
+            .route("/", web::get().to(index))
+            .service(
+                Files::new("/", "static")
+                    .prefer_utf8(true)
+                    .default_handler(web::get().to(serve_static)),
+            )
     })
-    .bind(("localhost", 8080))?
+    .bind("127.0.0.1:8042")?
     .run()
     .await
 }
