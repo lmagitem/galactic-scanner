@@ -1,8 +1,6 @@
 use actix_cors::Cors;
 use actix_files::{Files, NamedFile};
-use actix_service::Service;
 use actix_web::{get, post, web::Json, web, App, HttpRequest, HttpServer, Result};
-use actix_web::http::header::HeaderValue;
 use actix_web::middleware::Logger;
 use chrono::Local;
 use fern::{Dispatch, log_file};
@@ -24,12 +22,21 @@ async fn galaxy_api(settings: Json<GenerationSettings>) -> Json<Galaxy> {
     Json(galaxy)
 }
 
+#[derive(Clone, PartialEq, PartialOrd, Debug, Default, Serialize, Deserialize)]
+struct SystemPayload {
+    pub settings: GenerationSettings,
+    pub x: i64,
+    pub y: i64,
+    pub z: i64,
+}
+
 #[post("/system")]
-async fn system_api(settings: Json<GenerationSettings>) -> Json<StarSystem> {
-    let universe = Universe::generate(&settings);
-    let neighborhood = GalacticNeighborhood::generate(universe, &settings);
-    let mut galaxy = Galaxy::generate(neighborhood, 0, &settings);
-    let coord = SpaceCoordinates::new(0, 0, 0);
+async fn system_api(payload: Json<SystemPayload>) -> Json<StarSystem> {
+    let settings = &payload.settings;
+    let universe = Universe::generate(settings);
+    let neighborhood = GalacticNeighborhood::generate(universe, settings);
+    let mut galaxy = Galaxy::generate(neighborhood, 0, settings);
+    let coord = SpaceCoordinates::new(payload.x, payload.y, payload.z);
     let sub_sector = galaxy
         .get_division_at_level(coord, 1)
         .expect("Should have returned a sub-sector.");
